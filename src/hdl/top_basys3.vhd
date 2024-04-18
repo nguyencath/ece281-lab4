@@ -75,7 +75,7 @@ entity top_basys3 is
     port(
         -- inputs
         clk     :   in std_logic; -- native 100MHz FPGA clock
-        sw      :   in std_logic_vector(15 downto 0);
+        sw      :   in std_logic_vector(4 downto 0);
         btnU    :   in std_logic; -- master_reset
         btnL    :   in std_logic; -- clk_reset
         btnR    :   in std_logic; -- fsm_reset
@@ -118,39 +118,40 @@ architecture top_basys3_arch of top_basys3 is
     end component sevenSegDecoder;
 
 
---    --TDM
---    component TDM is 
---	   generic ( constant k_WIDTH : natural  := 4); -- bits in input and output
---        port(
---            i_clk		: in  STD_LOGIC;
---            i_D3 		: in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
---            i_D2         : in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
---            i_D1         : in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
---            i_D0         : in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
---            o_data        : out STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
---            o_sel        : out STD_LOGIC_VECTOR (3 downto 0)    -- selected data line (one-cold)            
---        );
---    end component TDM;
---    --NEW CLOCK DIVIDER
+    --TDM
+    component TDM4 is 
+	   generic ( constant k_WIDTH : natural  := 4); -- bits in input and output
+        port(
+            i_clk	: in std_logic; 
+--            i_reset :   in STD_LOGIC;
+            i_D3 		: in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
+            i_D2        : in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
+            i_D1        : in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
+            i_D0        : in  STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
+            o_data      : out STD_LOGIC_VECTOR (k_WIDTH - 1 downto 0);
+            o_sel       : out STD_LOGIC_VECTOR (3 downto 0)    -- selected data line (one-cold)            
+        );
+    end component TDM4;
+    
+    --NEW CLOCK DIVIDER
 --    component clock_div2 is      
 --            generic ( constant k_DIV : natural := 2    );
 --            port (  
---                i_clk    : in std_logic;           -- basys3 clk
---                o_clk    : out std_logic           -- divided (slow) clock
+--                i_clk2    : in std_logic;           -- basys3 clk
+--                o_clk2    : out std_logic;           -- divided (slow) clock
+--                i_reset    : out std_logic 
 --            );          
 --    end component clock_div2;
---    --tens and ones
---    component tens_ones is
---        port(
---            o_tens : out std_logic_vector (3 downto 0);
---            o_ones : out std_logic_vector (3 downto 0)
---        );
---     end component tens_ones;
+
 --SIGNALS
 	   signal w_clk : std_logic;		--this wire provides the connection between o_clk
        signal w_floor : std_logic_vector (3 downto 0);
        signal w_btnRU, w_btnUL : std_logic;
-       --signal w_tens, w_ones: std_logic_vector (3 downto 0); 
+       signal w_tens, w_ones, w_TDMdata: std_logic_vector (3 downto 0); 
+       signal w_clkDiv: std_logic;
+--       signal tens, ones : std_logic_vector (3 downto 0);
+	signal   f_sel		 : unsigned(1 downto 0)	:= "00"; -- 2 bit counter output to select MUX input
+
 
 begin
 	-- PORT MAPS ----------------------------------------
@@ -165,32 +166,76 @@ begin
 	
 	sevenSegDecoder_inst: sevenSegDecoder
 	   port map(
-	       i_D => w_floor,
+	       i_D => w_TDMdata,
            o_S => seg
 	   );
 	
 	--Complete the clock_divider portmap below based on the design provided	
-        clkdiv_inst : clock_divider         --instantiation of clock_divider to take 
-            generic map ( k_DIV => 50000000 ) -- 1 Hz clock from 100 MHz
-            port map (                          
+    clkdiv_inst : clock_divider         --instantiation of clock_divider to take 
+        generic map ( k_DIV => 50000000 ) -- 1 Hz clock from 100 MHz
+        port map (                          
             i_clk   => clk,
             i_reset => w_btnUL,          
             o_clk    => w_clk
-            );    
+        );  
+            
+    --ADVANCED COMPONENT---
+	TDM4_inst: TDM4
+           port map(
+               i_D3 => w_tens,
+               i_D2 => w_ones,
+               i_D1 => "0000",
+               i_D0 => "0000",
+               o_data => w_TDMdata,
+               o_sel => an,             
+               i_clk => w_clkDiv
+           );
+ 
+                        
+	clock_div2_inst: clock_divider
+	generic map ( k_DIV => 100000 )
+            port map(  
+                i_clk => clk,
+                o_clk => w_clkDiv,  
+                i_reset => w_btnUL
+            );
+
+              
 	-- CONCURRENT STATEMENTS ----------------------------
 	w_btnRU <= btnR or btnU;
 	w_btnUL <= btnL or btnU;
+
+--set tens place values
+    w_tens <= "0001" when unsigned(w_floor) > "1001" else
+                   "0001" when (w_ones <= "0110" and w_floor = "0000") else   
+                   "0000";
+                   
+--set ones place values
+    w_ones <= "0000" when (w_floor = "1010") else
+                   "0001" when (w_floor = "0001" or w_floor = "1011") else
+                   "0010" when (w_floor = "0010" or w_floor = "1100") else
+                   "0011" when (w_floor = "0011" or w_floor = "1101") else
+                   "0100" when (w_floor = "0100" or w_floor = "1110") else
+                   "0101" when (w_floor = "0101" or w_floor = "1111") else
+                   "0110" when (w_floor = "0110" or w_floor = "0000") else
+                   "0111" when (w_floor = "0111") else
+                   "1000" when (w_floor = "1000") else
+                   "1001" when (w_floor = "1001") else
+                   "0000";
+        --	send values to TDM
+--    if (o_floor > 9) 
 	-- LED 15 gets the FSM slow clock signal. The rest are grounded.
 	led(15) <= w_clk;
     led(14 downto 0) <= (others => '0');
+--    sw(15 downto 2) <= (others => '0');
 	-- leave unused switches UNCONNECTED. Ignore any warnings this causes.
-    --LOGIC FOR ADVANCED COMPONENT
-
 	-- wire up active-low 7SD anodes (an) as required
-	-- Tie any unused anodes to power ('1') to keep them off
-	an(3) <= '1';
-	an(2) <= '0';
-	an(1) <= '1';
-	an(0) <= '1';
+    -- Tie any unused anodes to power ('1') to keep them off
+    an(1) <= '1';
+    an(0) <= '1';
+    
+        
+    --LOGIC FOR ADVANCED COMPONENT
+--    tens <= '1' when w_floor > 9 else '0';
 	
 end top_basys3_arch;
